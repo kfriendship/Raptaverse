@@ -169,6 +169,7 @@ details.dev .chip{margin-top:8px}
 .gb-list li{background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:10px 12px}
 .gb-list b{font-weight:600; margin-right:6px}
 .gb-date{display:block; margin-top:2px; color:var(--muted); font-size:12px}
+.gb-del{margin-top:6px; padding:3px 10px; font-size:12px}
 .gb-form{display:grid; gap:8px; margin-top:6px}
 .gb-form textarea{width:100%; min-height:72px; resize:vertical; border:1px solid var(--line); background:var(--bg); border-radius:10px; padding:10px 12px}
 .gb-form textarea:focus{border-color:var(--ink); outline:none}
@@ -1349,14 +1350,17 @@ let gbMode = gbConfigured ? 'remote' : 'local';
 let gbCache = [];
 let gbLastPost = 0;
 const gbEndpoint = () => GUESTBOOK.supabaseUrl.replace(/\/+$/, '') + '/rest/v1/' + GUESTBOOK.table;
+// ponytail: "my message" = this browser's secret owner token + remembered ids; clearing site data loses delete rights
+const gbOwner = storeGet('raptors-gb-owner') || (() => { const t = crypto.randomUUID(); storeSet('raptors-gb-owner', t); return t; })();
+let gbMine = (() => { try{ return JSON.parse(storeGet('raptors-gb-mine') || '[]'); }catch(e){ return []; } })();
 function gbLocal(){ try{ return JSON.parse(storeGet(GB_KEY) || '[]'); }catch(e){ return []; } }
 async function gbFetch(){
   if(gbMode === 'remote'){
     try{
-      const r = await fetch(gbEndpoint() + '?select=name,text,created_at&order=created_at.desc&limit=50', {headers:{apikey:GUESTBOOK.supabaseKey}});
+      const r = await fetch(gbEndpoint() + '?select=id,name,text,created_at&order=created_at.desc&limit=50', {headers:{apikey:GUESTBOOK.supabaseKey}});
       if(!r.ok) throw new Error('HTTP ' + r.status);
       const rows = await r.json();
-      gbCache = rows.map(x => ({name:x.name, text:x.text, at:Date.parse(x.created_at)}));
+      gbCache = rows.map(x => ({id:x.id, name:x.name, text:x.text, at:Date.parse(x.created_at), mine:gbMine.includes(x.id)}));
       return gbCache;
     }catch(e){ console.warn('Guestbook server unreachable, falling back to this device', e); gbMode = 'fallback'; }
   }
@@ -1365,11 +1369,22 @@ async function gbFetch(){
 }
 async function gbAdd(name, text){
   if(gbMode === 'remote'){
-    const r = await fetch(gbEndpoint(), {method:'POST', headers:{apikey:GUESTBOOK.supabaseKey, 'Content-Type':'application/json', Prefer:'return=minimal'}, body:JSON.stringify({name, text})});
+    const r = await fetch(gbEndpoint() + '?select=id', {method:'POST', headers:{apikey:GUESTBOOK.supabaseKey, 'Content-Type':'application/json', Prefer:'return=representation'}, body:JSON.stringify({name, text, owner:gbOwner})});
+    if(r.ok){ const [row] = await r.json(); gbMine = gbMine.concat(row.id).slice(-200); storeSet('raptors-gb-mine', JSON.stringify(gbMine)); }
     if(!r.ok) throw new Error('HTTP ' + r.status);
     return gbFetch();
   }
-  gbCache = [{name, text, at:Date.now()}].concat(gbLocal()).slice(0, 50);
+  gbCache = [{name, text, at:Date.now(), mine:true}].concat(gbLocal()).slice(0, 50);
+  storeSet(GB_KEY, JSON.stringify(gbCache));
+  return gbCache;
+}
+async function gbDelete(e){
+  if(gbMode === 'remote'){
+    const r = await fetch(GUESTBOOK.supabaseUrl.replace(/\/+$/, '') + '/rest/v1/rpc/delete_guestbook', {method:'POST', headers:{apikey:GUESTBOOK.supabaseKey, 'Content-Type':'application/json'}, body:JSON.stringify({p_id:e.id, p_owner:gbOwner})});
+    if(!r.ok || !(await r.json())) throw new Error('HTTP ' + r.status);
+    return gbFetch();
+  }
+  gbCache = gbLocal().filter(x => !(x.at === e.at && x.text === e.text));
   storeSet(GB_KEY, JSON.stringify(gbCache));
   return gbCache;
 }
@@ -1399,7 +1414,13 @@ function openGuestbook(onSaved){
   const note = el('p', {class:'muted', text:gbNote()});
   const renderList = arr => {
     if(!arr.length){ list.replaceChildren(el('li', {class:'muted', text:'No messages yet. Be the first to sign.'})); return; }
-    list.replaceChildren(...arr.map(e => el('li', {}, [el('b', {text:e.name}), e.text, e.at ? el('span', {class:'gb-date', text:fmtDate(e.at)}) : null])));
+    list.replaceChildren(...arr.map(e => el('li', {}, [el('b', {text:e.name}), e.text, e.at ? el('span', {class:'gb-date', text:fmtDate(e.at)}) : null,
+      e.mine ? el('button', {class:'chip gb-del', type:'button', text:'Delete', 'aria-label':'Delete my message', onclick:async ev => {
+        if(!confirm('Delete this message?')) return;
+        ev.target.disabled = true;
+        try{ renderList(await gbDelete(e)); onSaved(); showToast('Message deleted'); }
+        catch(err){ ev.target.disabled = false; status.textContent = 'Couldn’t delete the message. Try again.'; }
+      }}) : null])));
   };
   list.replaceChildren(el('li', {class:'muted', text:'Loading messages…'}));
   gbFetch().then(arr => { renderList(arr); note.textContent = gbNote(); onSaved(); });

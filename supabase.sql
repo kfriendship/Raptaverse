@@ -40,3 +40,18 @@ create policy "qb insert" on public.qb_scores
 -- 방문자(anon)가 읽고 쓸 수 있게 권한 부여. 없으면 HTTP 401 "permission denied" 발생
 grant select, insert on public.guestbook to anon;
 grant select, insert on public.qb_scores to anon;
+
+-- 내가 쓴 방명록 지우기 (로그인 없이 브라우저별 비밀 토큰으로 본인 확인)
+alter table public.guestbook add column if not exists owner text;
+
+-- owner 토큰은 다른 사람이 못 보게 owner 열만 빼고 읽기 허용
+revoke select on public.guestbook from anon;
+grant select (id, name, text, created_at) on public.guestbook to anon;
+
+create or replace function public.delete_guestbook(p_id bigint, p_owner text)
+returns boolean language sql security definer set search_path = public as $$
+  with d as (delete from public.guestbook where id = p_id and owner = p_owner and p_owner is not null returning 1)
+  select exists(select 1 from d);
+$$;
+revoke all on function public.delete_guestbook(bigint, text) from public;
+grant execute on function public.delete_guestbook(bigint, text) to anon;
