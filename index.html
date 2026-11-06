@@ -1744,8 +1744,10 @@ document.querySelectorAll('[data-qbkey]').forEach(b => {
 
 /* ---------- live players: Supabase Realtime (presence = who's here + their look, broadcast = movement/emotes/chat) ---------- */
 const net = (() => {
-  const id = Math.random().toString(36).slice(2, 10);
-  let ch = null, ready = false, lastSend = 0, lastKey = '';
+  // ponytail: one character per browser (saved id). Another device = another player until there's a login
+  const id = storeGet('raptors-player-id') || (() => { const t = Math.random().toString(36).slice(2, 10); storeSet('raptors-player-id', t); return t; })();
+  const sess = Math.random().toString(36).slice(2, 10);
+  let ch = null, ready = false, kicked = false, lastSend = 0, lastKey = '';
   // ponytail: whitelist remote avatar fields against DEFAULT so a peer can't inject odd values
   const clean = c => { const o = Object.assign({}, DEFAULT); if(c) for(const k in DEFAULT) if(typeof c[k] === typeof DEFAULT[k]) o[k] = c[k]; o.name = String(o.name).slice(0, 16); return o; };
   function peer(pid, c){
@@ -1779,8 +1781,15 @@ const net = (() => {
       pr.to.set(+m.x || 0, +m.y || 0, +m.z || 0); pr.face = +m.f || 0; pr.seen = now();
     });
     ch.on('broadcast', {event:'emote'}, ({payload:m}) => { const pr = world && world.peers.get(m.id); if(pr && EMOTES[m.type]) startEmote(pr.ch, m.type); });
+    // same player opened in a newer tab: this older tab leaves so only one character exists
+    ch.on('broadcast', {event:'hello'}, ({payload:m}) => {
+      if(m.id !== id || m.sess === sess || kicked) return;
+      kicked = true; ready = false; ch.untrack(); ch.unsubscribe();
+      if(world) world.peers.forEach((_, pid) => drop(pid));
+      openModal('Opened in another tab', [el('p', {text:'Your player is now in another tab or window. Reload this page to play here instead.'})]);
+    });
     ch.on('broadcast', {event:'chat'}, ({payload:m}) => { const pr = world && world.peers.get(m.id); if(pr) say(pr, String(m.text || '').slice(0, 60)); });
-    ch.subscribe(s => { ready = s === 'SUBSCRIBED'; if(ready){ track(); lastKey = ''; } });
+    ch.subscribe(s => { if(kicked) return; ready = s === 'SUBSCRIBED'; if(ready){ send('hello', {sess}); track(); lastKey = ''; } });
   }
   function tick(t, dt){
     const w = world, p = w.player.position;
