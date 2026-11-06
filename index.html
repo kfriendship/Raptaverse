@@ -109,6 +109,13 @@ details.dev .chip{margin-top:8px}
 #worldStage{position:absolute; inset:0}
 .hud-top{position:absolute; top:calc(12px + env(safe-area-inset-top,0px)); left:16px; right:16px; display:flex; justify-content:space-between; align-items:center; gap:12px; pointer-events:none}
 .hud-top > *{pointer-events:auto}
+.hud-right{display:flex; gap:8px; align-items:flex-start}
+.online{position:relative}
+.online summary{list-style:none; white-space:nowrap}
+.online summary::-webkit-details-marker{display:none}
+.online summary::before{content:""; display:inline-block; width:8px; height:8px; border-radius:50%; background:#2EBD59; margin-right:6px; vertical-align:middle}
+.online ul{position:absolute; right:0; top:calc(100% + 6px); margin:0; padding:8px 0; list-style:none; min-width:170px; max-height:50vh; overflow:auto; background:var(--panel); color:var(--ink); border-radius:12px; box-shadow:0 6px 24px rgba(0,0,0,.35); font-size:14px}
+.online li{padding:5px 14px; white-space:nowrap}
 .hud-title span{color:#FF3B3B; margin-left:6px; font-size:.62em; letter-spacing:.06em; vertical-align:middle}
 .hud-title{font-family:"Graduate", "Black Han Sans", serif; font-size:24px; color:#FFFFFF; text-shadow:0 1px 8px rgba(0,0,0,.45); pointer-events:none}
 .hud-help{position:absolute; left:16px; top:calc(58px + env(safe-area-inset-top,0px)); color:#E6ECE8; font-size:13px; background:rgba(15,26,20,.55); padding:6px 12px; border-radius:999px}
@@ -241,7 +248,10 @@ details.dev .chip{margin-top:8px}
   <div id="worldStage"></div>
   <div class="hud-top">
     <div class="hud-title">RAPTORS <span>3RD ANNIVERSARY</span></div>
-    <button class="chip" id="backBtn" type="button">Edit player</button>
+    <div class="hud-right">
+      <details class="online" id="online" hidden><summary class="chip" id="onlineCount"></summary><ul id="onlineList"></ul></details>
+      <button class="chip" id="backBtn" type="button">Edit player</button>
+    </div>
   </div>
   <div class="hud-help">WASD to move, Shift to sprint, Space to jump, Enter to chat, 1–4 for emotes, drag to look around. Photo spot on the stage, QB Challenge on the field</div>
   <form class="chatbar" id="chatbar" hidden>
@@ -1749,7 +1759,7 @@ const net = (() => {
   const sess = Math.random().toString(36).slice(2, 10);
   let ch = null, ready = false, kicked = false, lastSend = 0, lastKey = '';
   // ponytail: whitelist remote avatar fields against DEFAULT so a peer can't inject odd values
-  const clean = c => { const o = Object.assign({}, DEFAULT); if(c) for(const k in DEFAULT) if(typeof c[k] === typeof DEFAULT[k]) o[k] = c[k]; o.name = String(o.name).slice(0, 16); return o; };
+  const clean = c => { const o = Object.assign({}, DEFAULT); if(c) for(const k in DEFAULT) if(typeof c[k] === typeof DEFAULT[k] || (k === 'number' && (c[k] === '' || /^\d{1,2}$/.test(c[k])))) o[k] = c[k]; o.name = String(o.name).slice(0, 16); return o; };
   function peer(pid, c){
     const w = world; if(!w || pid === id) return null;
     let pr = w.peers.get(pid);
@@ -1774,6 +1784,10 @@ const net = (() => {
     ch.on('presence', {event:'sync'}, () => {
       const st = ch.presenceState();
       for(const pid in st) peer(pid, st[pid][0] && st[pid][0].cfg);
+      const names = Object.keys(st).map(pid => { const c = clean(st[pid][0] && st[pid][0].cfg); return (numStr(c) ? '#' + numStr(c) + ' ' : '') + (c.name.trim().toUpperCase() || 'ROOKIE') + (pid === id ? ' (you)' : ''); }).sort();
+      document.getElementById('onlineCount').textContent = names.length + ' online';
+      document.getElementById('onlineList').replaceChildren(...names.map(n => el('li', {text:n})));
+      document.getElementById('online').hidden = false;
       if(world) [...world.peers.keys()].forEach(pid => { if(!st[pid]) drop(pid); });
     });
     ch.on('broadcast', {event:'pos'}, ({payload:m}) => {
@@ -1784,7 +1798,7 @@ const net = (() => {
     // same player opened in a newer tab: this older tab leaves so only one character exists
     ch.on('broadcast', {event:'hello'}, ({payload:m}) => {
       if(m.id !== id || m.sess === sess || kicked) return;
-      kicked = true; ready = false; ch.untrack(); ch.unsubscribe();
+      kicked = true; ready = false; ch.untrack(); ch.unsubscribe(); document.getElementById('online').hidden = true;
       if(world) world.peers.forEach((_, pid) => drop(pid));
       openModal('Opened in another tab', [el('p', {text:'Your player is now in another tab or window. Reload this page to play here instead.'})]);
     });
