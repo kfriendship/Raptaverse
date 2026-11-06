@@ -36,3 +36,7 @@ create policy "qb read" on public.qb_scores
 
 create policy "qb insert" on public.qb_scores
   for insert to anon with check (true);
+
+-- 방문자(anon)가 읽고 쓸 수 있게 권한 부여. 없으면 HTTP 401 "permission denied" 발생
+grant select, insert on public.guestbook to anon;
+grant select, insert on public.qb_scores to anon;
